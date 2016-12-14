@@ -16,6 +16,7 @@ import org.json.JSONObject;
 import android.Manifest;
 import android.app.ListActivity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.location.Criteria;
 import android.location.Location;
@@ -27,19 +28,24 @@ import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.util.Log;
+import android.view.Gravity;
 import android.view.View;
 import android.widget.ArrayAdapter;
+import android.widget.ListView;
 import android.widget.Toast;
 
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.location.DetectedActivity;
 import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
 
 public class MainActivity extends ListActivity implements LocationListener,GoogleApiClient.ConnectionCallbacks,GoogleApiClient.OnConnectionFailedListener {
 
+    static ArrayList<String> imagesURLArray;
+    static ArrayList<String> imagesFullSizes;
     ArrayList<FoursquareVenue> venuesList;
 
     // the foursquare client_id and the client_secret
@@ -54,6 +60,9 @@ public class MainActivity extends ListActivity implements LocationListener,Googl
     ArrayAdapter myAdapter;
     private GoogleApiClient mGoogleApiClient;
     LocationRequest mLocationRequest;
+    private Location oldLocation;
+    private List<RowItem> rowItems;
+    private ArrayList<String> listTitle;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -73,6 +82,8 @@ public class MainActivity extends ListActivity implements LocationListener,Googl
             Log.d("onCreate", "Google Play Services available. Continuing.");
         }
 
+        imagesURLArray = new ArrayList<>();
+        imagesFullSizes = new ArrayList<>();
         buildGoogleApiClient();
 
 
@@ -128,8 +139,15 @@ public class MainActivity extends ListActivity implements LocationListener,Googl
         longtitude = Double.toString(location.getLongitude());
         latitude = Double.toString(location.getLatitude());
 
-        // start the AsyncTask that makes the call for the venus search.
-        new fourquare().execute();
+        if(oldLocation != null){
+            Log.d("Distance is >>>>> "," : "+oldLocation.distanceTo(location));
+        }
+
+        if(oldLocation == null || oldLocation.distanceTo(location)>10) {
+            // start the AsyncTask that makes the call for the venus search.
+            new fourquare().execute();
+        }
+        oldLocation = location;
 
     }
 
@@ -145,7 +163,8 @@ public class MainActivity extends ListActivity implements LocationListener,Googl
         @Override
         protected Object doInBackground(Object[] objects) {
             // make Call to the url
-            temp = makeCall("https://api.foursquare.com/v2/venues/search?client_id=" + CLIENT_ID + "&client_secret=" + CLIENT_SECRET + "&v=20161209&ll="+latitude+","+longtitude);
+            // temp = makeCall("https://api.foursquare.com/v2/venues/search?client_id=" + CLIENT_ID + "&client_secret=" + CLIENT_SECRET + "&v=20161209&venuePhotos=1&ll="+latitude+","+longtitude);
+            temp = makeCall("https://api.foursquare.com/v2/venues/explore?client_id=" + CLIENT_ID + "&client_secret=" + CLIENT_SECRET + "&v=20161209&venuePhotos=1&ll="+latitude+","+longtitude);
             return null;
         }
 
@@ -165,20 +184,37 @@ public class MainActivity extends ListActivity implements LocationListener,Googl
                 // parseFoursquare venues search result
                 venuesList = parseFoursquare(temp);
 
-                List listTitle = new ArrayList();
-
+                rowItems = new ArrayList<RowItem>();
+                listTitle = new ArrayList();
                 for (int i = 0; i < venuesList.size(); i++) {
                     // make a list of the venus that are loaded in the list.
                     // show the name, the category and the city
                     listTitle.add(i, venuesList.get(i).getName() + ", " + venuesList.get(i).getCategory() + "" + venuesList.get(i).getCity());
+                    RowItem item = new RowItem(imagesURLArray.get(i), listTitle.get(i));
+                    rowItems.add(item);
                 }
 
                 // set the results to the list
                 // and show them in the xml
-                myAdapter = new ArrayAdapter(MainActivity.this, R.layout.row_layout, R.id.listText, listTitle);
+                myAdapter = new CustomListViewAdapter(MainActivity.this, R.layout.row_layout, rowItems);
                 setListAdapter(myAdapter);
             }
         }
+    }
+
+    @Override
+    protected void onListItemClick(ListView l, View v, int position, long id) {
+        super.onListItemClick(l, v, position, id);
+        Toast toast = Toast.makeText(getApplicationContext(),
+                "Item " + (position + 1) + ": " + rowItems.get(position),
+                Toast.LENGTH_SHORT);
+        toast.setGravity(Gravity.BOTTOM|Gravity.CENTER_HORIZONTAL, 0, 0);
+        toast.show();
+        Intent i =new Intent(this,DetailsActivity.class);
+        String url = imagesURLArray.get(position);
+        i.putExtra("details", listTitle.get(position));
+        i.putExtra("url", url.replaceAll("500x500", imagesFullSizes.get(position)));
+        this.startActivity(i);
     }
 
     public static String makeCall(String url) {
@@ -224,30 +260,60 @@ public class MainActivity extends ListActivity implements LocationListener,Googl
             Log.d("parseFoursquare : ", jsonObject.toString());
             // make an jsonObject in order to parse the response
             if (jsonObject.has("response")) {
-                if (jsonObject.getJSONObject("response").has("venues")) {
-                    JSONArray jsonArray = jsonObject.getJSONObject("response").getJSONArray("venues");
+                if (jsonObject.getJSONObject("response").has("groups")) {
+                    JSONArray jsonArray = jsonObject.getJSONObject("response").getJSONArray("groups").getJSONObject(0).getJSONArray("items");
 
                     for (int i = 0; i < jsonArray.length(); i++) {
                         FoursquareVenue poi = new FoursquareVenue();
-                        if (jsonArray.getJSONObject(i).has("name")) {
-                            poi.setName(jsonArray.getJSONObject(i).getString("name"));
-                            if(jsonArray.getJSONObject(i).has("id"))
-                                poi.setID(jsonArray.getJSONObject(i).getString("id"));
+                        if (jsonArray.getJSONObject(i).has("venue")) {
+                            JSONObject venue = jsonArray.getJSONObject(i).getJSONObject("venue");
+                            poi.setName(venue.getString("name"));
+                            if(venue.has("id"))
+                                poi.setID(venue.getString("id"));
 
-                            if (jsonArray.getJSONObject(i).has("location")) {
-                                if (jsonArray.getJSONObject(i).getJSONObject("location").has("address")) {
-                                    if (jsonArray.getJSONObject(i).getJSONObject("location").has("city")) {
-                                        poi.setCity(jsonArray.getJSONObject(i).getJSONObject("location").getString("city"));
+                            if (venue.has("location")) {
+                                JSONObject location = venue.getJSONObject("location");
+                                if (location.has("address")) {
+                                    if (location.has("city")) {
+                                        poi.setCity(venue.getJSONObject("location").getString("city"));
                                     }
-                                    if (jsonArray.getJSONObject(i).has("categories")) {
-                                        if (jsonArray.getJSONObject(i).getJSONArray("categories").length() > 0) {
-                                            if (jsonArray.getJSONObject(i).getJSONArray("categories").getJSONObject(0).has("icon")) {
-                                                poi.setCategory(jsonArray.getJSONObject(i).getJSONArray("categories").getJSONObject(0).getString("name"));
+                                    if (venue.has("categories")) {
+                                        if (venue.getJSONArray("categories").length() > 0) {
+                                            if (venue.getJSONArray("categories").getJSONObject(0).has("icon")) {
+                                                poi.setCategory(venue.getJSONArray("categories").getJSONObject(0).getString("name"));
                                             }
                                         }
                                     }
                                     temp.add(poi);
                                 }
+                            }
+
+                            if (venue.has("photos")) {
+                                JSONObject photos = venue.getJSONObject("photos");
+                                int photoCount = Integer.parseInt(photos.getString("count"));
+                                if(photoCount>0) {
+                                    JSONArray groups = photos.getJSONArray("groups");
+                                    JSONArray photoItems = groups.getJSONObject(0).getJSONArray("items");
+                                    String photoURL = photoItems.getJSONObject(0).getString("prefix");
+                                    photoURL += "500x500";
+                                    photoURL += photoItems.getJSONObject(0).getString("suffix");
+                                    imagesURLArray.add(photoURL);
+                                    imagesFullSizes.add(photoItems.getJSONObject(0).getString("width")+"x"+photoItems.getJSONObject(0).getString("height"));
+                                    Log.d("the URL ", "" + photoURL);
+                                }else{
+                                    if (venue.has("featuredPhotos")) {
+                                        JSONObject featuredPhotos = venue.getJSONObject("featuredPhotos");
+                                        JSONArray photoItems = featuredPhotos.getJSONArray("items");
+                                        String photoURL = photoItems.getJSONObject(0).getString("prefix");
+                                        photoURL += "200x200";
+                                        photoURL += photoItems.getJSONObject(0).getString("suffix");
+                                        imagesURLArray.add(photoURL);
+                                        imagesFullSizes.add(photoItems.getJSONObject(0).getString("width")+"x"+photoItems.getJSONObject(0).getString("height"));
+                                        Log.d("the URL ", ""+photoURL);
+
+                                    }
+                                }
+
                             }
                         }
                     }
